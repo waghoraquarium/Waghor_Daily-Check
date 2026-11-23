@@ -1661,6 +1661,31 @@ html[data-theme="dark"] .filter-btn[aria-pressed="true"] {
 .conn-pill.ok { background: var(--ok-bg); color: var(--ok); border: 1px solid var(--ok-border); }
 .conn-pill.off { background: var(--glass-recessed); color: var(--ink-secondary); border: 1px solid var(--glass-border); }
 
+
+/* Developer Credit Footer */
+.app-footer {
+  max-width: 704px;
+  margin: 24px auto 0;
+  padding: 0 calc(14px + env(safe-area-inset-right)) 0 calc(14px + env(safe-area-inset-left));
+}
+.credit-card {
+  background: var(--glass-card-bg);
+  backdrop-filter: blur(13px) saturate(225%);
+  -webkit-backdrop-filter: blur(13px) saturate(225%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-dome), var(--glass-shadow);
+  border-radius: var(--radius-md);
+  padding: 14px 18px;
+  text-align: center;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--ink-secondary);
+}
+.credit-card strong {
+  color: var(--ink);
+  font-weight: 700;
+}
+
 @media (max-width: 420px) {
   .actions-grid {
     grid-template-columns: 1fr;
@@ -1926,6 +1951,14 @@ html[data-theme="dark"] .filter-btn[aria-pressed="true"] {
     </div>
   </section>
 </main>
+
+<footer class="app-footer">
+  <div class="credit-card">
+    <div>พัฒนาโดย <strong>นราธิป ลีธีระ (นักวิชาการศึกษา)</strong></div>
+    <div>งานส่งเสริมวิชาการ และพัฒนาสื่อ กลุ่มพิพิธภัณฑ์สัตว์น้ำ</div>
+  </div>
+</footer>
+
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
