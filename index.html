@@ -2188,7 +2188,8 @@ const $ = s => document.querySelector(s);
 let st = fresh();
 let masterAssets = DEFAULT_ASSETS.slice();
 let masterStaff = DEFAULT_STAFF.slice();
-let cloudCfg = { url: "", token: "" };
+const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbz2zgS5RZysYNAMXtNG2fHBp8TBkybJnOSz8KqW1pk4V9IRdvMt4TUb4GF5dsCfefQX/exec";
+let cloudCfg = { url: DEFAULT_API_URL, token: "" };
 let cloudStatsCache = null;
 
 let histFilter = "all";
@@ -2285,7 +2286,7 @@ function renderStaffDropdown() {
   const sel = $("#staff-select");
   const cur = st.insp.trim();
   const opts = ['<option value="">-- เลือกรายชื่อเจ้าหน้าที่ --</option>'].concat(
-    masterStaff.map(p => `<option value="${esc(p.name)}" ${p.name === cur ? "selected" : ""}>${esc(p.name)}${p.role ? " (" + esc(p.role) + ")" : ""}</option>`)
+    masterStaff.map(p => `<option value="${esc(p.name)}" ${p.name === cur ? "selected" : ""}>${esc(p.name)}</option>`)
   );
   sel.innerHTML = opts.join("");
   $("#staff-meta").textContent = `ทำเนียบ ${masterStaff.length} ท่าน`;
@@ -3236,8 +3237,10 @@ if (savedTheme === "dark" || savedTheme === "light") {
 }
 
 const savedCloud = load(KC, null);
-if (savedCloud && typeof savedCloud === "object") {
-  cloudCfg = { url: savedCloud.url || "", token: savedCloud.token || "" };
+if (savedCloud && typeof savedCloud === "object" && savedCloud.url) {
+  cloudCfg = { url: savedCloud.url, token: savedCloud.token || "" };
+} else {
+  cloudCfg = { url: DEFAULT_API_URL, token: (savedCloud && savedCloud.token) || "" };
 }
 
 const savedMaster = load(KM, null);
@@ -3267,6 +3270,10 @@ if (clockTimer) clearInterval(clockTimer);
 clockTimer = setInterval(tick, 1000);
 render();
 updateSyncUI();
+if (isValidAppsScriptUrl(cloudCfg.url)) {
+  pullMasterConfig(true);
+  syncPendingToCloud(true);
+}
 </script>
 </body>
 </html>
