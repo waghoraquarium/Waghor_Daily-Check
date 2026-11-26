@@ -43,7 +43,7 @@
 
   /* Convex Water-Droplet Liquid Glass Tokens (Light) */
   --bg: #EBF3FA;
-  --glass-header: linear-gradient(155deg, rgba(11, 31, 58, 0.54) 0%, rgba(7, 21, 39, 0.60) 52%, rgba(29, 78, 216, 0.42) 100%);
+  --glass-header: linear-gradient(155deg, rgba(11, 31, 58, 0.86) 0%, rgba(7, 21, 39, 0.90) 52%, rgba(29, 78, 216, 0.78) 100%);
   --glass-header-btn: linear-gradient(165deg, rgba(255, 255, 255, 0.24) 0%, rgba(255, 255, 255, 0.04) 100%);
   --glass-header-border: rgba(255, 255, 255, 0.28);
   --header-ink: #FFFFFF;
@@ -101,7 +101,7 @@
 
 html[data-theme="dark"] {
   --bg: var(--navy-950);
-  --glass-header: linear-gradient(160deg, rgba(11, 31, 58, 0.46) 0%, rgba(7, 21, 39, 0.56) 100%);
+  --glass-header: linear-gradient(160deg, rgba(11, 31, 58, 0.84) 0%, rgba(7, 21, 39, 0.92) 100%);
   --glass-header-btn: linear-gradient(165deg, rgba(125, 211, 252, 0.22) 0%, rgba(255, 255, 255, 0.05) 100%);
   --glass-header-border: rgba(125, 211, 252, 0.26);
   --header-ink: #F8FAFC;
@@ -132,7 +132,7 @@ html[data-theme="dark"] {
   --brand-soft: rgba(14, 165, 233, 0.22);
   --brand-ink: var(--navy-950);
 
-  --ok: #10B981;
+  --ok: #34D399;
   --ok-bg: rgba(5, 150, 105, 0.22);
   --ok-border: rgba(16, 185, 129, 0.42);
 
@@ -208,6 +208,7 @@ html[data-theme="dark"] body {
   top: 0;
   z-index: 30;
   padding: calc(10px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 0 calc(12px + env(safe-area-inset-left));
+  background: linear-gradient(to bottom, var(--bg) 0%, var(--bg) 34%, transparent 100%);
   pointer-events: none;
 }
 
@@ -438,7 +439,7 @@ html[data-theme="dark"] body {
   justify-content: center;
   gap: 6px;
   cursor: pointer;
-  transition: background var(--dur-base) var(--ease-out), color var(--dur-fast) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), transform var(--dur-press) var(--ease-out);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), transform var(--dur-press) var(--ease-out);
 }
 .nav-tab:hover {
   color: var(--ink);
@@ -779,7 +780,7 @@ html[data-theme="dark"] .seg {
   justify-content: center;
   gap: 7px;
   cursor: pointer;
-  transition: background var(--dur-base) var(--ease-out), color var(--dur-fast) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), transform var(--dur-press) var(--ease-out);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), transform var(--dur-press) var(--ease-out);
 }
 
 .seg button:hover {
@@ -1474,6 +1475,11 @@ html[data-theme="dark"] .filter-btn[aria-pressed="true"] {
   padding: 12px 18px calc(20px + env(safe-area-inset-bottom));
 }
 
+.modal-backdrop.sheet .modal-head,
+.modal-backdrop.sheet .input-wrap {
+  flex-shrink: 0;
+}
+
 .sheet-grabber {
   width: 44px;
   height: 5px;
@@ -1535,6 +1541,7 @@ html[data-theme="dark"] .filter-btn[aria-pressed="true"] {
 /* Asset Picker Specifics */
 .zone-pills {
   display: flex;
+  flex-shrink: 0;
   gap: 6px;
   overflow-x: auto;
   padding: 8px 0 4px;
@@ -2198,6 +2205,27 @@ let pickerTarget = null; // null | "main" | itemKey ("1.1".."2.3")
 let pickerZone = "ทั้งหมด";
 let pickerType = "ทั้งหมด";
 let clockTimer = null;
+let lastSavedSig = "";
+let lastSavedRec = null;
+let isSyncing = false;
+let syncQueued = false;
+let lastPickerTrigger = null;
+
+function getStateSignature(s) {
+  return JSON.stringify(s);
+}
+
+async function fetchJsonWithTimeout(url, options, timeoutMs = 15000) {
+  const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+  try {
+    const res = await fetch(url, ctrl ? Object.assign({}, options || {}, { signal: ctrl.signal }) : options);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return await res.json();
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 function fresh() {
   const s = { insp: "", notes: "", mainAssets: [], items: {} };
@@ -2421,11 +2449,12 @@ function formatItemLine(k, t, it) {
 }
 
 function report(rec) {
-  const d = new Date(rec.ts);
-  const s = rec.st;
+  const d = new Date(rec && rec.ts ? rec.ts : Date.now());
+  const s = (rec && rec.st && typeof rec.st === "object") ? rec.st : fresh();
+  const items = (s.items && typeof s.items === "object") ? s.items : {};
   const probs = g => GROUPS.find(x => x.id === g).items
-    .filter(([k]) => s.items[k] && s.items[k].bad)
-    .map(([k, t]) => formatItemLine(k, t, s.items[k]));
+    .filter(([k]) => items[k] && items[k].bad)
+    .map(([k, t]) => formatItemLine(k, t, items[k]));
   const ex = probs("ex");
   const tk = probs("tk");
   const mainTags = Array.isArray(s.mainAssets) && s.mainAssets.length ? `[${s.mainAssets.join(", ")}]` : "";
@@ -2511,17 +2540,18 @@ function updateSyncUI() {
 }
 
 function recordToPayload(rec) {
-  const d = new Date(rec.ts);
-  const s = rec.st;
+  const d = new Date(rec && rec.ts ? rec.ts : Date.now());
+  const s = (rec && rec.st && typeof rec.st === "object") ? rec.st : fresh();
+  const items = (s.items && typeof s.items === "object") ? s.items : {};
   const getProb = gid => GROUPS.find(x => x.id === gid).items
-    .filter(([k]) => s.items[k] && s.items[k].bad)
-    .map(([k, t]) => formatItemLine(k, t, s.items[k]).replace(/^- /, ""))
+    .filter(([k]) => items[k] && items[k].bad)
+    .map(([k, t]) => formatItemLine(k, t, items[k]).replace(/^- /, ""))
     .join(" | ");
   const ex = getProb("ex");
   const tk = getProb("tk");
   const mainTags = Array.isArray(s.mainAssets) && s.mainAssets.length ? `[${s.mainAssets.join(", ")}]` : "";
   const nt = [mainTags, (s.notes || "").trim()].filter(Boolean).join(" ");
-  const badCount = ALL.filter(k => s.items[k] && s.items[k].bad).length;
+  const badCount = ALL.filter(k => items[k] && items[k].bad).length;
   const status = (ex || tk || nt) ? "พบจุดที่ต้องแก้ไข" : "ปกติ";
   return {
     id: rec.id || ("CHK-" + rec.ts),
@@ -2545,36 +2575,64 @@ async function syncPendingToCloud(silent) {
     if (!silent) toast("ขณะนี้ออฟไลน์ เก็บคิวไว้ซิงก์อัตโนมัติเมื่อมีสัญญาณ");
     return false;
   }
-  const pending = getPendingRecords();
-  if (!pending.length) {
+  if (isSyncing) {
+    syncQueued = true;
+    return false;
+  }
+  const initialPending = getPendingRecords();
+  if (!initialPending.length) {
     if (!silent) toast("ข้อมูลทั้งหมดซิงก์ขึ้น Google Sheet แล้ว");
     return true;
   }
+  isSyncing = true;
+  let syncedTotal = 0;
   try {
-    const res = await fetch(cloudCfg.url.trim(), {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({
-        token: cloudCfg.token || "",
-        records: pending.map(recordToPayload)
-      })
-    });
-    const data = await res.json();
-    if (!data || !data.ok) throw new Error((data && data.error) || "Sync failed");
-    const accepted = new Set(data.acceptedIds || pending.map(r => r.id));
-    const lim = Date.now() - 30 * 864e5;
-    const all = load(KH, []).filter(r => r && r.ts >= lim).map(r => {
-      if (accepted.has(r.id)) return Object.assign({}, r, { syncStatus: "synced" });
-      return r;
-    });
-    store(KH, all);
+    while (true) {
+      const pending = getPendingRecords();
+      if (!pending.length) break;
+      const chunk = pending.slice(0, 30);
+      const data = await fetchJsonWithTimeout(cloudCfg.url.trim(), {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({
+          token: cloudCfg.token || "",
+          records: chunk.map(recordToPayload)
+        })
+      });
+      if (!data || !data.ok) throw new Error((data && data.error) || "Sync failed");
+      const accepted = new Set(data.acceptedIds || chunk.map(r => r.id || ("CHK-" + r.ts)));
+      const lim = Date.now() - 30 * 864e5;
+      let batchMatched = 0;
+      const all = load(KH, []).filter(r => r && r.ts >= lim).map(r => {
+        const recId = r.id || ("CHK-" + r.ts);
+        if (accepted.has(recId)) {
+          if (r.syncStatus === "pending") batchMatched++;
+          return Object.assign({}, r, { id: recId, syncStatus: "synced" });
+        }
+        return r;
+      });
+      store(KH, all);
+      syncedTotal += batchMatched;
+      if (lastSavedRec && accepted.has(lastSavedRec.id)) {
+        lastSavedRec.syncStatus = "synced";
+      }
+      if (!batchMatched) break;
+    }
     updateSyncUI();
     if (!$("#hist").hidden) renderHist();
-    if (!silent) toast(`ซิงก์ขึ้น Google Sheet สำเร็จ ${pending.length} รายการ`);
+    if (!silent && syncedTotal > 0) toast(`ซิงก์ขึ้น Google Sheet สำเร็จ ${syncedTotal} รายการ`);
     return true;
   } catch (err) {
+    updateSyncUI();
+    if (!$("#hist").hidden) renderHist();
     if (!silent) toast("ยังซิงก์ไม่ได้ (อับสัญญาณหรือ URL ไม่ถูกต้อง) เก็บไว้ในคิวแล้ว");
     return false;
+  } finally {
+    isSyncing = false;
+    if (syncQueued) {
+      syncQueued = false;
+      syncPendingToCloud(true);
+    }
   }
 }
 
@@ -2587,8 +2645,7 @@ async function pullMasterConfig(silent) {
     const u = new URL(cloudCfg.url.trim());
     u.searchParams.set("action", "config");
     if (cloudCfg.token) u.searchParams.set("token", cloudCfg.token);
-    const res = await fetch(u.toString());
-    const data = await res.json();
+    const data = await fetchJsonWithTimeout(u.toString());
     if (!data || !data.ok) throw new Error("Config fetch failed");
     if (Array.isArray(data.assets) && data.assets.length) masterAssets = data.assets;
     if (Array.isArray(data.staff) && data.staff.length) masterStaff = data.staff;
@@ -2611,8 +2668,7 @@ async function pullCloudStats(silent) {
     const u = new URL(cloudCfg.url.trim());
     u.searchParams.set("action", "stats");
     if (cloudCfg.token) u.searchParams.set("token", cloudCfg.token);
-    const res = await fetch(u.toString());
-    const data = await res.json();
+    const data = await fetchJsonWithTimeout(u.toString());
     if (!data || !data.ok || !data.stats) throw new Error("Stats error");
     cloudStatsCache = data.stats;
     return cloudStatsCache;
@@ -2633,6 +2689,13 @@ function persist() {
   }
   const now = new Date();
   const hasCloud = isValidAppsScriptUrl(cloudCfg.url);
+  const sig = getStateSignature(st);
+  if (lastSavedRec && lastSavedSig === sig && (now.getTime() - lastSavedRec.ts) < 5 * 60 * 1000) {
+    if (hasCloud && lastSavedRec.syncStatus === "pending") {
+      syncPendingToCloud(true);
+    }
+    return lastSavedRec;
+  }
   const rec = {
     id: "CHK-" + now.getTime() + "-" + Math.floor(Math.random() * 1000),
     day: dKey(now),
@@ -2644,6 +2707,8 @@ function persist() {
   const h = load(KH, []).filter(r => r && r.ts >= lim);
   h.push(rec);
   store(KH, h);
+  lastSavedSig = sig;
+  lastSavedRec = rec;
   updateSyncUI();
   if (hasCloud) {
     syncPendingToCloud(true);
@@ -2667,6 +2732,7 @@ function getTargetAssetList() {
 }
 
 function openAssetPicker(target) {
+  lastPickerTrigger = document.activeElement;
   pickerTarget = target;
   pickerZone = "ทั้งหมด";
   pickerType = "ทั้งหมด";
@@ -2683,6 +2749,10 @@ function openAssetPicker(target) {
 function closeAssetPicker() {
   $("#asset-modal").hidden = true;
   pickerTarget = null;
+  if (lastPickerTrigger && lastPickerTrigger.isConnected && typeof lastPickerTrigger.focus === "function") {
+    lastPickerTrigger.focus();
+  }
+  lastPickerTrigger = null;
 }
 
 function renderAssetPickerFilters() {
@@ -2944,6 +3014,8 @@ $("#modal-confirm").addEventListener("click", () => {
   const keepName = st.insp;
   st = fresh();
   st.insp = keepName;
+  lastSavedSig = "";
+  lastSavedRec = null;
   render();
   draft();
   closeResetModal();
@@ -2960,6 +3032,7 @@ function openCloudModal() {
 }
 function closeCloudModal() {
   $("#cloud-modal").hidden = true;
+  $("#btn-cloud-settings").focus();
 }
 $("#btn-cloud-settings").addEventListener("click", openCloudModal);
 $("#cloud-close").addEventListener("click", closeCloudModal);
@@ -2967,23 +3040,30 @@ $("#cloud-modal").addEventListener("click", e => {
   if (e.target === $("#cloud-modal")) closeCloudModal();
 });
 $("#btn-save-cloud").addEventListener("click", async () => {
+  const saveBtn = $("#btn-save-cloud");
+  if (saveBtn.disabled) return;
   const rawUrl = ($("#api-url").value || "").trim();
   const rawToken = ($("#api-token").value || "").trim();
   if (rawUrl && !isValidAppsScriptUrl(rawUrl)) {
     toast("URL ต้องขึ้นต้นด้วย https://script.google.com/ เท่านั้น");
     return;
   }
-  cloudCfg = { url: rawUrl, token: rawToken };
-  store(KC, cloudCfg);
-  updateSyncUI();
-  if (rawUrl) {
-    toast("บันทึกการตั้งค่าแล้ว กำลังดึงทำเนียบสื่อล่าสุด...");
-    await pullMasterConfig(false);
-    await syncPendingToCloud(true);
-  } else {
-    toast("ยกเลิกการเชื่อมต่อแล้ว กลับสู่โหมดในเครื่อง");
+  saveBtn.disabled = true;
+  try {
+    cloudCfg = { url: rawUrl, token: rawToken };
+    store(KC, cloudCfg);
+    updateSyncUI();
+    if (rawUrl) {
+      toast("บันทึกการตั้งค่าแล้ว กำลังดึงทำเนียบสื่อล่าสุด...");
+      await pullMasterConfig(false);
+      await syncPendingToCloud(true);
+    } else {
+      toast("ยกเลิกการเชื่อมต่อแล้ว กลับสู่โหมดในเครื่อง");
+    }
+    closeCloudModal();
+  } finally {
+    saveBtn.disabled = false;
   }
-  closeCloudModal();
 });
 $("#btn-pull-config").addEventListener("click", async () => {
   const rawUrl = ($("#api-url").value || "").trim();
@@ -3033,9 +3113,12 @@ $("#btn-export").addEventListener("click", exportCSV);
 
 /* History View */
 function isRecordBad(r) {
-  const n = ALL.filter(k => r.st.items[k] && r.st.items[k].bad).length;
-  const hasMainAssets = Array.isArray(r.st.mainAssets) && r.st.mainAssets.length > 0;
-  return Boolean(n || hasMainAssets || (r.st.notes && r.st.notes.trim()));
+  const s = r && r.st ? r.st : null;
+  if (!s) return false;
+  const items = (s.items && typeof s.items === "object") ? s.items : {};
+  const n = ALL.filter(k => items[k] && items[k].bad).length;
+  const hasMainAssets = Array.isArray(s.mainAssets) && s.mainAssets.length > 0;
+  return Boolean(n || hasMainAssets || (s.notes && s.notes.trim()));
 }
 
 function renderHist() {
@@ -3064,12 +3147,13 @@ function renderHist() {
     const bad = isRecordBad(r);
     const syncLbl = r.syncStatus === "synced" ? "ซิงก์แล้ว" : r.syncStatus === "pending" ? "รอซิงก์" : "ในเครื่อง";
     const syncCls = r.syncStatus === "synced" ? "synced" : r.syncStatus === "pending" ? "pending" : "";
+    const recKey = r.id || String(r.ts);
     return `
       <article class="hcard">
         <div class="hcard-row">
           <div>
             <div class="hcard-date">${esc(dateTh(new Date(r.ts)))}</div>
-            <div class="hcard-meta">${esc(timeTh(new Date(r.ts)))} · ผู้ตรวจ: ${esc(r.st.insp || "-")}</div>
+            <div class="hcard-meta">${esc(timeTh(new Date(r.ts)))} · ผู้ตรวจ: ${esc((r.st && r.st.insp) || "-")}</div>
           </div>
           <div class="badge-row">
             <span class="badge ${bad ? "bad" : "ok"}">${bad ? SVG_BAD : SVG_OK}<span>${bad ? "พบจุดที่ต้องแก้ไข" : "ปกติ"}</span></span>
@@ -3078,9 +3162,9 @@ function renderHist() {
         </div>
         <pre class="report-pre" hidden>${esc(report(r))}</pre>
         <div class="hbtns">
-          <button type="button" class="btn btn-ghost btn-sm" data-h="v" data-i="${r.ts}">ดูรายงาน</button>
-          <button type="button" class="btn btn-primary btn-sm" data-h="c" data-i="${r.ts}">คัดลอก</button>
-          <button type="button" class="btn btn-line btn-sm hbtn-line" data-h="l" data-i="${r.ts}">ส่ง LINE</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-h="v" data-i="${esc(recKey)}">ดูรายงาน</button>
+          <button type="button" class="btn btn-primary btn-sm" data-h="c" data-i="${esc(recKey)}">คัดลอก</button>
+          <button type="button" class="btn btn-line btn-sm hbtn-line" data-h="l" data-i="${esc(recKey)}">ส่ง LINE</button>
         </div>
       </article>`;
   }).join("");
@@ -3097,7 +3181,7 @@ document.querySelectorAll(".filter-btn[data-filter]").forEach(btn => {
 $("#hl").addEventListener("click", async e => {
   const b = e.target.closest("button[data-h]");
   if (!b) return;
-  const r = getRecentHistory().find(x => String(x.ts) === b.dataset.i);
+  const r = getRecentHistory().find(x => (x.id || String(x.ts)) === b.dataset.i);
   if (!r) return;
   if (b.dataset.h === "v") {
     const p = b.closest(".hcard").querySelector("pre");
@@ -3237,7 +3321,7 @@ if (savedTheme === "dark" || savedTheme === "light") {
 }
 
 const savedCloud = load(KC, null);
-if (savedCloud && typeof savedCloud === "object" && savedCloud.url) {
+if (savedCloud && typeof savedCloud === "object" && typeof savedCloud.url === "string") {
   cloudCfg = { url: savedCloud.url, token: savedCloud.token || "" };
 } else {
   cloudCfg = { url: DEFAULT_API_URL, token: (savedCloud && savedCloud.token) || "" };
@@ -3252,17 +3336,25 @@ if (savedMaster && Array.isArray(savedMaster.staff) && savedMaster.staff.length)
 }
 
 const d0 = load(KD, null);
-if (d0 && d0.day === dKey(new Date()) && d0.st) {
+if (d0 && d0.day === dKey(new Date()) && d0.st && typeof d0.st === "object") {
   const base = fresh();
-  st = Object.assign(base, d0.st, {
-    mainAssets: Array.isArray(d0.st.mainAssets) ? d0.st.mainAssets : [],
-    items: Object.assign(base.items, d0.st.items)
-  });
+  const srcItems = (d0.st.items && typeof d0.st.items === "object") ? d0.st.items : {};
   ALL.forEach(k => {
-    if (!Array.isArray(st.items[k].assets)) st.items[k].assets = [];
+    const src = srcItems[k];
+    base.items[k] = {
+      bad: Boolean(src && src.bad),
+      txt: String((src && src.txt) || ""),
+      assets: Array.isArray(src && src.assets) ? src.assets.filter(Boolean) : []
+    };
   });
+  st = {
+    insp: String(d0.st.insp || ""),
+    notes: String(d0.st.notes || ""),
+    mainAssets: Array.isArray(d0.st.mainAssets) ? d0.st.mainAssets.filter(Boolean) : [],
+    items: base.items
+  };
 } else if (d0 && d0.st) {
-  st.insp = d0.st.insp || "";
+  st.insp = String(d0.st.insp || "");
 }
 
 tick();

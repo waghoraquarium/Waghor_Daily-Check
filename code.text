@@ -137,18 +137,21 @@ function doPost(e) {
 
     records.forEach(rec => {
       if (!rec || typeof rec !== 'object') return;
-      const id = safeCell(rec.id || ('CHK-' + Date.now() + '-' + Math.floor(Math.random() * 1000)), 64);
-      acceptedIds.push(id);
+      const rawId = String(rec.id || ('CHK-' + Date.now() + '-' + Math.floor(Math.random() * 1000))).trim();
+      const id = safeCell(rawId, 64);
+      acceptedIds.push(rawId);
       if (existingIds.has(id)) return; // ข้ามรายการที่ซิงก์ไปแล้ว
 
       const status = rec.status === 'พบจุดที่ต้องแก้ไข' ? 'พบจุดที่ต้องแก้ไข' : 'ปกติ';
-      const badCount = Math.max(0, Math.min(99, parseInt(rec.badCount, 10) || 0));
+      const badCount = Math.max(0, Math.min(999, parseInt(rec.badCount, 10) || 0));
+      const mKeyText = safeCell(rec.monthKey, 16);
+      const monthCell = mKeyText ? (mKeyText.startsWith("'") ? mKeyText : "'" + mKeyText) : '';
 
       rowsToAppend.push([
         id,
         safeCell(rec.dateTh, 60),
         safeCell(rec.timeTh, 30),
-        safeCell(rec.monthKey, 16),
+        monthCell,
         safeCell(rec.inspector, 120),
         status,
         badCount,
@@ -209,7 +212,7 @@ function computeStats_(ss) {
   const sheet = ss.getSheetByName(SHEET_LOGS);
   const nowMonth = Utilities.formatDate(new Date(), 'Asia/Bangkok', 'yyyy-MM');
   if (!sheet || sheet.getLastRow() < 2) {
-    return { monthKey: nowMonth, total: 0, okCount: 0, badCount: 0, topAssets: [], recentLogs: [] };
+    return { monthKey: nowMonth, total: 0, okCount: 0, badCount: 0, topAssets: [] };
   }
 
   const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 12).getValues();
@@ -217,8 +220,10 @@ function computeStats_(ss) {
   const assetFreq = {};
 
   rows.forEach(r => {
-    const mKey = String(r[3] || '').trim();
-    if (mKey && mKey !== nowMonth) return;
+    const mKey = (r[3] instanceof Date)
+      ? Utilities.formatDate(r[3], 'Asia/Bangkok', 'yyyy-MM')
+      : String(r[3] || '').replace(/^'/, '').trim();
+    if (!mKey || mKey !== nowMonth) return;
     total++;
     const isBad = String(r[5] || '') === 'พบจุดที่ต้องแก้ไข';
     if (isBad) badCount++; else okCount++;
