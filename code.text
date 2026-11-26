@@ -1,0 +1,244 @@
+/**
+ * Google Apps Script Backend สำหรับระบบตรวจเช็คนิทรรศการประจำวัน
+ * พิพิธภัณฑ์สัตว์น้ำหว้ากอ อุทยานวิทยาศาสตร์พระจอมเกล้า ณ หว้ากอ
+ *
+ * วิธีติดตั้ง:
+ * 1. เปิด Google Sheet "ระบบตรวจเช็คนิทรรศการประจำวัน_พิพิธภัณฑ์สัตว์น้ำหว้ากอ"
+ * 2. ไปที่เมนู ส่วนขยาย (Extensions) > Apps Script
+ * 3. วางโค้ดนี้ทั้งหมดแทนที่โค้ดเดิม แล้วกด บันทึก (Ctrl+S)
+ * 4. (แนะนำ) ตั้งค่า API_TOKEN ใน Script Properties ชื่อคีย์ "WAGHOR_API_TOKEN"
+ *    หรือปล่อยว่างไว้หากใช้งานเฉพาะภายในหน่วยงานโดยไม่ต้องกรอกรหัสผ่าน
+ * 5. กด ทำให้ใช้งานได้ (Deploy) > การทำให้ใช้งานได้รายการใหม่ (New deployment)
+ *    - ประเภท: เว็บแอป (Web app)
+ *    - ดำเนินการในฐานะ: ฉัน (Me)
+ *    - ผู้ที่มีสิทธิ์เข้าถึง: ทุกคน (Anyone)
+ * 6. คัดลอก URL ของเว็บแอป ไปวางในหน้า "ตั้งค่าการเชื่อมต่อ" ของเว็บแอป index.html
+ */
+
+const SHEET_LOGS = 'บันทึกผลตรวจ';
+const SHEET_ASSETS = 'ทำเนียบจุดตรวจ';
+const SHEET_STAFF = 'รายชื่อเจ้าหน้าที่';
+
+const MAX_STR_LEN = 2000;
+const MAX_BATCH_SIZE = 30;
+
+/**
+ * ป้องกัน Formula Injection (CSV/Sheet Injection) ตามหลัก Secure Coding
+ */
+function safeCell(val, maxLen) {
+  let s = String(val == null ? '' : val).trim();
+  const limit = maxLen || MAX_STR_LEN;
+  if (s.length > limit) s = s.slice(0, limit);
+  if (/^[=+\-@\t\r]/.test(s)) {
+    s = "'" + s;
+  }
+  return s;
+}
+
+/**
+ * ตรวจสอบ API Token (หากตั้งค่าไว้ใน Script Properties)
+ */
+function verifyToken(incomingToken) {
+  const expected = PropertiesService.getScriptProperties().getProperty('WAGHOR_API_TOKEN');
+  if (!expected) return true; // ไม่ได้ตั้ง Token บังคับ
+  return String(incomingToken || '') === String(expected);
+}
+
+function jsonOut(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * GET Endpoint:
+ * ?action=config -> ดึงรายชื่อจุดตรวจ (6 โซน) และรายชื่อเจ้าหน้าที่ล่าสุด
+ * ?action=stats  -> ดึงสถิติย้อนหลัง 30 วัน / เดือนปัจจุบัน และอันดับจุดเสียซ้ำซาก
+ */
+function doGet(e) {
+  try {
+    const params = (e && e.parameter) ? e.parameter : {};
+    if (!verifyToken(params.token)) {
+      return jsonOut({ ok: false, error: 'Unauthorized token' });
+    }
+
+    const action = String(params.action || 'config').toLowerCase();
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    if (action === 'config') {
+      return jsonOut({
+        ok: true,
+        updatedAt: new Date().toISOString(),
+        assets: readAssets_(ss),
+        staff: readStaff_(ss)
+      });
+    }
+
+    if (action === 'stats') {
+      return jsonOut({
+        ok: true,
+        updatedAt: new Date().toISOString(),
+        stats: computeStats_(ss)
+      });
+    }
+
+    return jsonOut({ ok: false, error: 'Unknown action' });
+  } catch (err) {
+    return jsonOut({ ok: false, error: 'Server error' });
+  }
+}
+
+/**
+ * POST Endpoint:
+ * รับข้อมูลผลตรวจ 1 รายการ หรือหลายรายการ (Batch Offline Queue Sync)
+ * ส่งด้วย Content-Type: text/plain เพื่อหลีกเลี่ยง CORS preflight บนเบราว์เซอร์
+ */
+function doPost(e) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    const raw = (e && e.postData && e.postData.contents) ? e.postData.contents : '{}';
+    const payload = JSON.parse(raw);
+
+    if (!verifyToken(payload.token)) {
+      return jsonOut({ ok: false, error: 'Unauthorized token' });
+    }
+
+    const records = Array.isArray(payload.records)
+      ? payload.records.slice(0, MAX_BATCH_SIZE)
+      : (payload.record ? [payload.record] : []);
+
+    if (!records.length) {
+      return jsonOut({ ok: false, error: 'No records provided' });
+    }
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let sheet = ss.getSheetByName(SHEET_LOGS);
+    if (!sheet) {
+      sheet = ss.insertSheet(SHEET_LOGS);
+      sheet.appendRow([
+        'ID', 'วันที่', 'เวลา', 'เดือน', 'ผู้ตรวจเช็ค', 'สถานะภาพรวม',
+        'จำนวนข้อพบปัญหา', 'รหัสจุดที่พบปัญหา', 'ปัญหานิทรรศการ',
+        'ปัญหาตู้จัดแสดง', 'บันทึกเพิ่มเติม', 'รายงานเต็ม', 'เวลาซิงก์'
+      ]);
+    }
+
+    // อ่าน ID เดิมเพื่อป้องกันการซิงก์ซ้ำ (Idempotency)
+    const lastRow = sheet.getLastRow();
+    const existingIds = new Set();
+    if (lastRow > 1) {
+      const idVals = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+      idVals.forEach(r => { if (r[0]) existingIds.add(String(r[0])); });
+    }
+
+    const syncedAt = Utilities.formatDate(new Date(), 'Asia/Bangkok', 'yyyy-MM-dd HH:mm:ss');
+    const rowsToAppend = [];
+    const acceptedIds = [];
+
+    records.forEach(rec => {
+      if (!rec || typeof rec !== 'object') return;
+      const id = safeCell(rec.id || ('CHK-' + Date.now() + '-' + Math.floor(Math.random() * 1000)), 64);
+      acceptedIds.push(id);
+      if (existingIds.has(id)) return; // ข้ามรายการที่ซิงก์ไปแล้ว
+
+      const status = rec.status === 'พบจุดที่ต้องแก้ไข' ? 'พบจุดที่ต้องแก้ไข' : 'ปกติ';
+      const badCount = Math.max(0, Math.min(99, parseInt(rec.badCount, 10) || 0));
+
+      rowsToAppend.push([
+        id,
+        safeCell(rec.dateTh, 60),
+        safeCell(rec.timeTh, 30),
+        safeCell(rec.monthKey, 16),
+        safeCell(rec.inspector, 120),
+        status,
+        badCount,
+        safeCell(rec.assetCodes, 400),
+        safeCell(rec.exProblems, 1500),
+        safeCell(rec.tkProblems, 1500),
+        safeCell(rec.notes, 1500),
+        safeCell(rec.fullReport, 3000),
+        syncedAt
+      ]);
+      existingIds.add(id);
+    });
+
+    if (rowsToAppend.length) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, rowsToAppend.length, 13).setValues(rowsToAppend);
+    }
+
+    return jsonOut({
+      ok: true,
+      inserted: rowsToAppend.length,
+      acceptedIds: acceptedIds,
+      syncedAt: syncedAt
+    });
+  } catch (err) {
+    return jsonOut({ ok: false, error: 'Failed to save records' });
+  } finally {
+    try { lock.releaseLock(); } catch (_) {}
+  }
+}
+
+function readAssets_(ss) {
+  const sheet = ss.getSheetByName(SHEET_ASSETS);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 5).getValues();
+  return rows
+    .filter(r => r[0] && String(r[4] || 'ใช้งาน').trim() !== 'ปิดใช้งาน')
+    .map(r => ({
+      code: String(r[0]).trim(),
+      zone: String(r[1] || '').trim(),
+      type: String(r[2] || '').trim(),
+      name: String(r[3] || '').trim()
+    }));
+}
+
+function readStaff_(ss) {
+  const sheet = ss.getSheetByName(SHEET_STAFF);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 4).getValues();
+  return rows
+    .filter(r => r[1] && String(r[3] || 'ใช้งาน').trim() !== 'ปิดใช้งาน')
+    .map(r => ({
+      name: String(r[1]).trim(),
+      role: String(r[2] || '').trim()
+    }));
+}
+
+function computeStats_(ss) {
+  const sheet = ss.getSheetByName(SHEET_LOGS);
+  const nowMonth = Utilities.formatDate(new Date(), 'Asia/Bangkok', 'yyyy-MM');
+  if (!sheet || sheet.getLastRow() < 2) {
+    return { monthKey: nowMonth, total: 0, okCount: 0, badCount: 0, topAssets: [], recentLogs: [] };
+  }
+
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 12).getValues();
+  let total = 0, okCount = 0, badCount = 0;
+  const assetFreq = {};
+
+  rows.forEach(r => {
+    const mKey = String(r[3] || '').trim();
+    if (mKey && mKey !== nowMonth) return;
+    total++;
+    const isBad = String(r[5] || '') === 'พบจุดที่ต้องแก้ไข';
+    if (isBad) badCount++; else okCount++;
+
+    const codes = String(r[7] || '').split(',').map(x => x.trim()).filter(Boolean);
+    codes.forEach(c => {
+      assetFreq[c] = (assetFreq[c] || 0) + 1;
+    });
+  });
+
+  const topAssets = Object.keys(assetFreq)
+    .map(code => ({ code: code, count: assetFreq[code] }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+
+  return {
+    monthKey: nowMonth,
+    total: total,
+    okCount: okCount,
+    badCount: badCount,
+    topAssets: topAssets
+  };
+}
